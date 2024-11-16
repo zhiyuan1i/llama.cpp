@@ -611,6 +611,11 @@ extern "C" {
                        llama_pos   p0,
                        llama_pos   p1);
 
+    // Check if the kv cache attribute is a recurrent model(RWKV and SSMs)
+    LLAMA_API bool llama_kv_cache_recurrent(
+            struct llama_context * ctx);
+
+    
     // Copy all tokens that belong to the specified sequence to another sequence
     // Note that this does not allocate extra KV cache memory - it simply assigns the tokens to the new sequence
     // p0 < 0 : [0,  p1]

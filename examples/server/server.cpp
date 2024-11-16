@@ -1946,10 +1946,13 @@ struct server_context {
 
                             if (slot.params.cache_prompt) {
                                 // reuse any previously computed tokens that are common with the new prompt
-                                slot.n_past = longest_common_prefix(slot.cache_tokens, prompt_tokens);
+                                // Check whether the kv-cache is recurrent
+                                slot.n_past = longest_common_prefix(slot.cache_tokens, prompt_tokens); // Transformer and SSM based models
+                                
+                                
 
-                                // reuse chunks from the cached prompt by shifting their KV cache in the new position
-                                if (params.n_cache_reuse > 0) {
+                                // reuse chunks from the cached prompt by shifting their KV cache in the new position, only for transformer based models
+                                if (params.n_cache_reuse > 0 && !llama_kv_cache_recurrent(ctx)) {
                                     size_t head_c = slot.n_past; // cache
                                     size_t head_p = slot.n_past; // current prompt
 

@@ -3768,6 +3768,10 @@ static void llama_kv_cache_clear(struct llama_kv_cache & cache) {
     }
 }
 
+inline static bool llama_kv_cache_check_recurrent(struct llama_kv_cache & cache) {
+    return cache.recurrent;
+}
+
 static bool llama_kv_cache_seq_rm(
         struct llama_kv_cache & cache,
                  llama_seq_id   seq_id,
@@ -3779,7 +3783,7 @@ static bool llama_kv_cache_seq_rm(
     if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
 
     // models like Mamba or RWKV can't have a state partially erased
-    if (cache.recurrent) {
+    if (llama_kv_cache_check_recurrent(cache)) {
         if (seq_id >= (int64_t) cache.size) {
             // could be fatal
             return false;
@@ -3840,7 +3844,7 @@ static void llama_kv_cache_seq_cp(
     if (p0 < 0) p0 = 0;
     if (p1 < 0) p1 = std::numeric_limits<llama_pos>::max();
 
-    if (cache.recurrent) {
+    if (llama_kv_cache_check_recurrent(cache)) {
         if ((uint32_t) seq_id_dst < cache.size && (uint32_t) seq_id_src < cache.size) {
             llama_kv_cell & tail_src = cache.cells[seq_id_src];
             llama_kv_cell & tail_dst = cache.cells[seq_id_dst];
@@ -3882,7 +3886,7 @@ static void llama_kv_cache_seq_keep(struct llama_kv_cache & cache, llama_seq_id 
     uint32_t new_head = cache.size;
 
     for (uint32_t i = 0; i < cache.size; ++i) {
-        if (cache.recurrent && (llama_seq_id) i != seq_id) {
+        if (llama_kv_cache_check_recurrent(cache) && (llama_seq_id) i != seq_id) {
             cache.cells[i].tail = -1;
         }
         if (!cache.cells[i].has_seq_id(seq_id)) {
@@ -3914,7 +3918,7 @@ static void llama_kv_cache_seq_add(
     // If there is no range then return early to avoid looping over the cache.
     if (p0 == p1) return;
 
-    if (cache.recurrent) {
+    if (llama_kv_cache_check_recurrent(cache)) {
         // for Mamba-like or RWKV models, only the pos needs to be shifted
         if (0 <= seq_id && seq_id < (int64_t) cache.size) {
             const int32_t tail_id = cache.cells[seq_id].tail;
@@ -3963,7 +3967,7 @@ static void llama_kv_cache_seq_div(
     // If there is no range then return early to avoid looping over the cache.
     if (p0 == p1) return;
 
-    if (cache.recurrent) {
+    if (llama_kv_cache_check_recurrent(cache)) {
         // for Mamba-like or RWKV models, only the pos needs to be changed
         if (0 <= seq_id && seq_id < (int64_t) cache.size) {
             const int32_t tail_id = cache.cells[seq_id].tail;
@@ -4003,7 +4007,7 @@ static llama_pos llama_kv_cache_seq_pos_max(struct llama_kv_cache & cache, llama
 }
 
 static void llama_kv_cache_defrag(struct llama_kv_cache & cache) {
-    if (!cache.recurrent) {
+    if (!llama_kv_cache_check_recurrent(cache)) {
         cache.do_defrag = true;
     }
 }
@@ -4049,7 +4053,7 @@ struct llama_kv_slot_restorer {
             cache.head  = old_state.head;
             cache.n     = old_state.n;
 
-            if (cache.recurrent) { // recurrent models like Mamba or RWKV can't have a state partially erased
+            if (llama_kv_cache_check_recurrent(cache)) { // recurrent models like Mamba or RWKV can't have a state partially erased
                 llama_kv_cache_seq_rm(cache, -1, -1, -1);
             } else {
                 for (auto & slot : slot_boundaries) {
@@ -20240,6 +20244,10 @@ bool llama_kv_cache_seq_rm(struct llama_context * ctx, llama_seq_id seq_id, llam
     return llama_kv_cache_seq_rm(ctx->kv_self, seq_id, p0, p1);
 }
 
+bool llama_kv_cache_recurrent(struct llama_context * ctx) {
+    return llama_kv_cache_check_recurrent(ctx->kv_self);
+}
+
 void llama_kv_cache_seq_cp(struct llama_context * ctx, llama_seq_id seq_id_src, llama_seq_id seq_id_dst, llama_pos p0, llama_pos p1) {
     if (seq_id_src == seq_id_dst) {
         return;
@@ -20491,6 +20499,9 @@ struct llama_data_write {
         const struct llama_kv_cache & kv_self = ctx->kv_self;
         std::vector<std::pair<uint32_t, uint32_t>> cell_ranges; // ranges, from inclusive, to exclusive
         uint32_t cell_count = 0;
+
+        // FIXME: not suitable for RWKV and SSMs
+        GGML_ASSERT(!kv_self.recurrent);
 
         // Count the number of cells with the specified seq_id
         // Find all the ranges of cells with this seq id (or all, when -1)
@@ -21177,6 +21188,9 @@ static size_t llama_state_seq_save_file_internal(struct llama_context * ctx, con
     file.write_u32((uint32_t) n_token_count);
     file.write_raw(tokens, sizeof(llama_token) * n_token_count);
 
+    // cannot deal with RWKV and SSMs
+    GGML_ASSERT(!ctx->kv_self.recurrent);
+    
     // save the context state using stream saving
     llama_data_write_file data_ctx(&file);
     llama_state_seq_get_data_internal(ctx, data_ctx, seq_id);
